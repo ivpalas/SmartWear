@@ -1,186 +1,155 @@
 import requests
 from bs4 import BeautifulSoup
 import json
+import os
+import re
 import time
 import random
-import re
-import os
-from urllib.parse import urljoin
 
-# --- Constantes Globales ---
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-    "Accept-Language": "fr-FR,fr;q=0.9"
-}
-BASE_URL = "https://shop.mango.com"
+class MangoGlobalScraper:
+    def __init__(self):
+        self.base_url = "https://shop.mango.com"
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "fr-FR,fr;q=0.9"
+        }
+        self.output_path = r"C:\Users\Ivin\Documents\SmartWear\Prediction\Result\Mango.json"
 
-# URL du catalogue Femme : Pulls et Cardigans (une catégorie de vêtements)
-MANGO_WOMEN_URL = "https://shop.mango.com/fr/fr/c/femme/pulls-et-cardigans_f9a8c868"
-OUTPUT_RESULT_DIR = r"C:\Users\Ivin\Documents\SmartWear\Prediction\Result"
-
-
-# =====================================================================
-# UTILITAIRES DE PARSING ET CLASSIFICATION
-# =====================================================================
-
-def parse_price_text(price_text):
-    """Extrait un nombre et la monnaie d'un texte de prix."""
-    if not price_text: return None, None
-    
-    txt = price_text.strip().replace('\xa0', ' ').replace('\u202f', ' ').strip()
-    currency = 'EUR' if '€' in txt else None
+    def clean_product_name(self, raw_name, url):
+        """Corrige les noms parasites en extrayant le nom réel depuis l'URL."""
+        trash_labels = ["Disponible Plus", "Selection", "PERFORMANCE", "Exclusivité internet", "ESSENTIALS", "Vêtement", "Selectioned"]
         
-    m = re.search(r'(\d{1,3}(?:[ \u00A0]\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)', txt)
-    if not m: return None, currency
+        # Si le nom est un tag marketing ou bizarre, on déduit le nom de l'URL
+        if raw_name in trash_labels or len(raw_name) < 3:
+            # L'URL finit par .../nom-du-produit_ID. On capture ce qui est avant l'ID
+            match = re.search(r'/([^/]+)_\d+', url)
+            if match:
+                return match.group(1).replace('-', ' ').capitalize()
+        return raw_name
 
-    num = m.group(1).replace(' ', '').replace('\u00A0', '').replace(',', '.')
-    try:
-        val = float(num)
-    except:
-        val = None
+    def get_detailed_data(self, url):
+        """Extraction approfondie sur la page produit."""
+        try:
+            time.sleep(random.uniform(0.5, 1.0))
+            res = requests.get(url, headers=self.headers, timeout=10)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            # 1. Vrai Prix (Final Price)
+            price = None
+            p_tag = soup.find('span', class_=re.compile(r"finalPrice|SinglePrice_finalPrice", re.I))
+            if not p_tag: p_tag = soup.find('span', class_=re.compile(r"SinglePrice_center", re.I))
+            if p_tag:
+                price = float(re.sub(r'[^\d,.]', '', p_tag.get_text()).replace(',', '.'))
 
-    return val, currency
+            # 2. Couleur (Alt de l'image sélectionnée)
+            color = None
+            sel = soup.find('span', class_=re.compile(r"selected", re.I))
+            if sel and sel.find('img'):
+                color = sel.find('img').get('alt', '').replace('Couleur ', '').replace(' sélectionnée', '').strip()
 
-def extract_from_json(r_text, catalogue_url):
-    """
-    Recherche les données produit dans le bloc JSON pré-chargé de Mango.
-    """
-    products_data = []
-    
-    # Mango utilise window.__PRELOADED_STATE__
-    match = re.search(r'window\.__PRELOADED_STATE__\s*=\s*(\{.+?\});', r_text, re.DOTALL)
-    
-    if not match:
-        return products_data
+            # 3. Tailles Disponibles (Exclut les notifyMe)
+            sizes = []
+            items = soup.find_all(['div', 'button'], class_=re.compile(r"sizeItem|sizePicker", re.I))
+            for item in items:
+                if not item.find(class_=re.compile(r"notifyMe|unavailable", re.I)):
+                    s_tag = item.find(class_=re.compile(r"textActionM|size-label", re.I))
+                    if s_tag:
+                        val = s_tag.get_text(strip=True)
+                        if val and val not in sizes: sizes.append(val)
+            
+            # 4. Description courte
+            desc = ""
+            desc_meta = soup.find('meta', {'property': 'og:description'})
+            if desc_meta: desc = desc_meta['content']
 
-    try:
-        data = json.loads(match.group(1))
+            return color, sizes, price, desc
+        except:
+            return None, [], None, ""
+
+    def scrape_category(self, url, genre, p_type):
+        print(f"📡 Analyse : {genre} > {p_type}")
+        try:
+            response = requests.get(url, headers=self.headers, timeout=20)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            links = soup.find_all('a', href=re.compile(r'/p/'))
+            cat_results = []
+            seen_urls = set()
+
+            for l in links:
+                href = l.get('href')
+                full_url = href if href.startswith('http') else self.base_url + href
+                clean_url = full_url.split('?')[0]
+
+                if clean_url in seen_urls: continue
+                seen_urls.add(clean_url)
+
+                # Extraction du nom brut
+                name_tag = l.find(['p', 'span']) or l.find_next(['p', 'span'])
+                raw_name = name_tag.get_text(strip=True) if name_tag else "Vêtement"
+                
+                # NETTOYAGE DU NOM IMMEDIAT
+                name = self.clean_product_name(raw_name, clean_url)
+
+                # Image
+                img_tag = l.find('img')
+                image_url = img_tag.get('src') if img_tag else None
+
+                print(f"  ∟ {name}...")
+                color, sizes, price, desc = self.get_detailed_data(clean_url)
+
+                if price or sizes:
+                    cat_results.append({
+                        "name": name,
+                        "price_value": price,
+                        "currency": "EUR",
+                        "description": desc,
+                        "color": color,
+                        "rating": None,
+                        "sizes": sizes,
+                        "fit_details": [],
+                        "category_auto": "Vêtements",
+                        "image": image_url,
+                        "genre": genre,
+                        "type": p_type,
+                        "url": clean_url
+                    })
+            return cat_results
+        except Exception as e:
+            print(f"⚠️ Erreur catégorie: {e}")
+            return []
+
+    def run(self):
+        catalog = [
+            ("Femme", "Pulls", "https://shop.mango.com/fr/fr/c/femme/pulls-et-cardigans_f9a8c868"),
+            ("Femme", "Manteaux", "https://shop.mango.com/fr/fr/c/femme/manteau_d1b967bc"),
+            ("Femme", "Robes", "https://shop.mango.com/fr/fr/c/femme/robes-et-combinaisons_e6bb8705"),
+            ("Femme", "Chaussures", "https://shop.mango.com/fr/fr/c/femme/chaussure_826dba0a"),
+            ("Homme", "Manteaux", "https://shop.mango.com/fr/fr/c/homme/manteaux_3a5ade78"),
+            ("Homme", "Pulls", "https://shop.mango.com/fr/fr/c/homme/gilets-et-pull-overs_89e09112"),
+            ("Homme", "Pantalons", "https://shop.mango.com/fr/fr/c/homme/pantalons_b126cc9c"),
+            ("Homme", "Vestes", "https://shop.mango.com/fr/fr/c/homme/vestes_b5a3a3f6"),
+            ("Teen", "Manteaux", "https://shop.mango.com/fr/fr/c/teen/teena/manteaux-et-vestes_8573c85c"),
+            ("Teen", "Pulls", "https://shop.mango.com/fr/fr/c/teen/teena/pulls-et-cardigans_48d543e1"),
+            ("Teen", "Jeans", "https://shop.mango.com/fr/fr/c/teen/teena/jeans_98b73358"),
+            ("Teen", "Robes", "https://shop.mango.com/fr/fr/c/teen/teena/robes-et-combinaisons_b05dc3e4"),
+            ("Enfants Fille", "Manteaux", "https://shop.mango.com/fr/fr/c/enfants/fille/manteaux-et-vestes_39dace35"),
+            ("Enfants Fille", "Jeans", "https://shop.mango.com/fr/fr/c/enfants/fille/jeans_a9530c83"),
+            ("Enfants Garçon", "Manteaux", "https://shop.mango.com/fr/fr/c/enfants/garcon/manteaux-et-vestes_3311d26e"),
+            ("Enfants Garçon", "T-shirts", "https://shop.mango.com/fr/fr/c/enfants/garcon/t-shirts_d4d4580c"),
+        ]
+
+        all_data = []
+        for genre, p_type, url in catalog:
+            category_data = self.scrape_category(url, genre, p_type)
+            all_data.extend(category_data)
+            print(f"✅ {len(category_data)} produits ajoutés.")
+
+        os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
+        with open(self.output_path, "w", encoding="utf-8") as f:
+            json.dump(all_data, f, indent=4, ensure_ascii=False)
         
-        # Le chemin vers les produits est dans 'entities.products' et les IDs sont dans 'catalog.products'
-        products_entities = data.get("entities", {}).get("products", {})
-        product_ids = data.get("catalog", {}).get("products", [])
-        
-        for p_id in product_ids:
-             # Récupère les données complètes de l'entité produit
-             product_data = products_entities.get(str(p_id))
-             
-             if product_data:
-                 products_data.append(product_data)
+        print(f"\n✨ BASE DE DONNÉES COMPLÈTE & NETTOYÉE : {len(all_data)} produits.")
 
-    except json.JSONDecodeError:
-        return products_data
-    
-    return products_data
-
-
-# =====================================================================
-# 2. Scrape la page catalogue Mango
-# =====================================================================
-def scrape_mango_catalogue(catalogue_url, genre):
-    
-    try:
-        r = requests.get(catalogue_url, headers=HEADERS, timeout=20) 
-        r.raise_for_status()
-    except requests.exceptions.RequestException:
-        return []
-
-    # --- TENTATIVE D'EXTRACTION JSON (Priorité absolue pour Mango) ---
-    raw_products = extract_from_json(r.text, catalogue_url)
-    
-    if not raw_products:
-        return []
-
-    # --- PHASE 2: CONVERSION DES DONNÉES BRUTES EN FORMAT JSON DÉFINI ---
-    products = []
-    
-    for item in raw_products:
-        
-        # Tente de récupérer le prix
-        price_raw = item.get("price") or item.get("finalPrice") or ""
-        price_value, currency = parse_price_text(price_raw)
-        
-        # Récupération des URLs
-        product_url_slug = item.get("slug")
-        product_url = urljoin(BASE_URL, product_url_slug) if product_url_slug else None
-        
-        # Image : Mango donne souvent l'URL complète de l'image principale
-        image_url = item.get("images", [{}])[0].get("url")
-        
-        # Classification rapide (Pulls/Cardigans)
-        category_name = item.get("families", [{}])[0].get("label") or "Vêtement"
-
-        # Construction du dictionnaire final
-        products.append({
-            "name": item.get("name") or "Inconnu",
-            "price_value": price_value,
-            "currency": currency,
-            "description": item.get("description") or "Aucune description",
-            "color": item.get("colors", [{}])[0].get("label") or "Inconnu",
-            "rating": None, # Non stocké dans le catalogue JSON principal
-            "sizes": item.get("sizes", []), # Liste brute des tailles
-            "fit_details": [], # Détails de coupe non disponibles dans le catalogue JSON
-            "category_auto": category_name,
-            "image": image_url,
-            "url": product_url,
-            "genre": genre
-        })
-        
-    return products
-
-
-# =====================================================================
-# 3. Exécution et Sauvegarde Silencieuse
-# =====================================================================
-def main_scraper():
-    
-    CATEGORIES_TO_SCRAPE = {
-        "Femme": "https://shop.mango.com/fr/fr/c/femme/pulls-et-cardigans_f9a8c868"
-    }
-    
-    all_results = []
-    
-    for genre, url in CATEGORIES_TO_SCRAPE.items():
-        
-        # Le type de produit est "Vêtements"
-        results_category = scrape_mango_catalogue(url, genre) 
-        all_results.extend(results_category)
-        
-        # Pause après la catégorie
-        time.sleep(random.uniform(10, 20))
-        
-    return all_results
-
-
-# =====================================================================
-# 4. Exécution et Sauvegarde Silencieuse
-# =====================================================================
 if __name__ == "__main__":
-    
-    # Créer le répertoire s'il n'existe pas
-    if not os.path.exists(OUTPUT_RESULT_DIR):
-        os.makedirs(OUTPUT_RESULT_DIR)
-        
-    results = [] 
-
-    try:
-        # --- EXÉCUTION ---
-        results = main_scraper() 
-        
-    except KeyboardInterrupt:
-        print("\n\n❌ INTERRUPTION UTILISATEUR. Sauvegarde des données collectées...")
-    except Exception as e:
-        print(f"\n❌ ERREUR INATTENDUE: {e}. Sauvegarde des données partielles...")
-    
-    finally:
-        # --- SAUVEGARDE SILENCIEUSE ---
-        OUTPUT_FILENAME = "Mango_Femme_Vetements.json"
-        FULL_OUTPUT_PATH = os.path.join(OUTPUT_RESULT_DIR, OUTPUT_FILENAME)
-
-        with open(FULL_OUTPUT_PATH, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=4, ensure_ascii=False)
-
-        print("\n==========================")
-        print("SCRAPING MANGO TERMINÉ")
-        print("==========================")
-        print(f"Total des produits extraits : {len(results)}")
-        print(f"Fichier enregistré : {FULL_OUTPUT_PATH}")
+    MangoGlobalScraper().run()

@@ -9,7 +9,7 @@ GOOGLE_GEMINI_API_KEY = "AIzaSyCkyCH_2SjSWq9XVqeqZ29dAoG_80e896Q"
 #  Chemins locaux
 # ==========================
 BASE_PATH = r"C:\Users\Ivin\Documents\SmartWear\BaseDeDonnee"
-PREDICT_IMAGE = r"C:\Users\Ivin\Documents\SmartWear\Prediction\Insert\Solenn2.png"
+PREDICT_IMAGE = r"C:\Users\Ivin\Documents\SmartWear\Prediction\Insert\Image4.png"
 OUTPUT_JSON_PATH = r"C:\Users\Ivin\Documents\SmartWear\Prediction\Result\BDD.json"
 OUTPUT_GRAPH_DIR = r"C:\Users\Ivin\Documents\SmartWear\Prediction\Result"
 

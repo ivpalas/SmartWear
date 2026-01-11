@@ -47,6 +47,7 @@ Taille estimé = ["XS", "S", "M", "L", "XL", "XLL"]
 
 Concernant les accesoires, tu devras mettre le nombre, le style générale ainsi que la couleur générale.
 Attention, une écharpe sera catégorisé comme un accessoire et non pas dans "Haut".
+Je souhaite que tu mettes soit '0' soit '1' si un accessoire est présent ou non.
 
 Commence par compléter les informations physiques. Puis essaye de deviner le reste
 **RESPECTE BIEN LE JSON, NE RENDS QUE LE JSON AVEC TOUTES LES INFORMATIONS**.

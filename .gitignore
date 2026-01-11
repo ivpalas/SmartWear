@@ -1,0 +1,7 @@
+# Fichiers de données trop lourds (GitHub limite à 100Mo)
+*.h5
+BaseDeDonnee/
+
+# Fichiers de test et brouillons
+TEST.py
+temp_*.py
